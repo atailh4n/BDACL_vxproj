@@ -1,16 +1,20 @@
 #include "SIMT.hpp"
+#include <omp.h>
 
-void SIMT::Constructor::execute(int threadCount = -1)
+void SIMT::Constructor::execute(int threadCount)
 {
 	if (threadCount <= 0) {
-		threadCount = UNIT_COUNT;  // default deðer olarak UNIT_SIZE kullanýlýr
+		threadCount = 1;  // Default 1 thread
 	}
-	std::vector<std::thread> threads;
 
-	for (int t = 0; t < UNIT_COUNT; ++t) {
+	std::vector<std::thread> threads;
+	threads.reserve(threadCount);
+
+#pragma omp parallel for num_threads(threadCount) collapse(2)
+	for (int t = 0; t < threadCount; ++t) {
 		threads.emplace_back([this, t, threadCount]() {
-			for (size_t instr = 0; instr < warps[0].size(); ++instr) {
-				for (int w = t; w < warpCount; w += threadCount) {
+			for (int w = t; w < warpCount && w < (int)warps.size(); w += threadCount) {
+				for (size_t instr = 0; instr < warps[w].size(); ++instr) {
 					for (int lane = 0; lane < WARP_SIZE; ++lane) {
 						if (warps[w][instr]) {
 							warps[w][instr](w* WARP_SIZE + lane);
@@ -21,6 +25,7 @@ void SIMT::Constructor::execute(int threadCount = -1)
 			});
 	}
 
+	#pragma omp parallel for
 	for (auto& th : threads) {
 		th.join();
 	}

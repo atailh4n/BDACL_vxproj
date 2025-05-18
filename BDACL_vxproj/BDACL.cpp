@@ -26,11 +26,14 @@ void BDACL::Constructor::enqueue(const std::function<void()>& task)
 		// Find the unit with the smallest queue
 		size_t minQueueIdx = 0;
 		size_t minQueueSize = unitQueues[0].size();
-
+		#pragma omp parallel for
 		for (size_t i = 0; i < unitQueues.size(); ++i) {
 			if (unitQueues[i].size() < minQueueSize) {
-				minQueueSize = unitQueues[i].size();
-				minQueueIdx = i;
+				#pragma omp critical
+				{
+					minQueueSize = unitQueues[i].size();
+					minQueueIdx = i;
+				}
 			}
 		}
 
