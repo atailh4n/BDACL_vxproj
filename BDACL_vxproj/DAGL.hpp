@@ -22,7 +22,7 @@ namespace BDACL {
 		DATask(const DATask&) = delete;
 		DATask& operator=(const DATask&) = delete;
 
-		// Taþýma serbest (default move semantics)
+		// TaÃ¾Ã½ma serbest (default move semantics)
 		DATask(DATask&&) = default;
 		DATask& operator=(DATask&&) = default;
 	};
@@ -50,7 +50,7 @@ namespace BDACL {
 		std::atomic<size_t> currentQueueIndex{ 0 };
 		std::mutex globalMutex;
 
-		// Work-stealing için optimize edilmiþ fonksiyon
+		// Work-stealing iÃ§in optimize edilmiÃ¾ fonksiyon
 		bool tryStealWork(DATask*& task, size_t thiefIndex) {
 			const size_t numQueues = threadQueues.size();
 			for (size_t i = 1; i < numQueues; ++i) {
@@ -88,15 +88,15 @@ namespace BDACL {
 
 		void initSchedulerPool(int threadCount = -1) {
 			if (threadCount <= 0) threadCount = std::thread::hardware_concurrency();
-			if (!threads.empty()) return; // Zaten çalýþýyor
+			if (!threads.empty()) return; // Zaten Ã§alÃ½Ã¾Ã½yor
 
-			// Önce tüm kuyruklarý oluþtur
+			// Ã–nce tÃ¼m kuyruklarÃ½ oluÃ¾tur
 			threadQueues.resize(threadCount);
 			for (int i = 0; i < threadCount; ++i) {
 				threadQueues[i] = std::make_unique<ThreadLocalQueue>();
 			}
 
-			// Sonra thread'leri baþlat
+			// Sonra thread'leri baÃ¾lat
 			threads.reserve(threadCount);
 			for (int i = 0; i < threadCount; ++i) {
 				threads.emplace_back([this, i] {
@@ -105,7 +105,7 @@ namespace BDACL {
 					while (!stop.load()) {
 						DATask* task = nullptr;
 
-						// 1. Önce yerel kuyruktan al
+						// 1. Ã–nce yerel kuyruktan al
 						{
 							std::unique_lock<std::mutex> lock(localQueue.mutex);
 							if (!localQueue.tasks.empty()) {
@@ -114,7 +114,7 @@ namespace BDACL {
 							}
 						}
 
-						// 2. Yerel kuyruk boþsa work-stealing yap
+						// 2. Yerel kuyruk boÃ¾sa work-stealing yap
 						if (!task) {
 							task = tryGetTaskFromOtherQueue(i);
 						}
@@ -128,7 +128,7 @@ namespace BDACL {
 							localQueue.notified = false;
 							continue;
 						}
-						// Task'ý çalýþtýr
+						// Task'Ã½ Ã§alÃ½Ã¾tÃ½r
 						executeTaskSafely(task);
 					}
 				});
@@ -177,7 +177,7 @@ namespace BDACL {
 		void shutdown() {
 			stop.store(true);
 
-			// Tüm thread'leri uyandýr
+			// TÃ¼m thread'leri uyandÃ½r
 			for (auto& queue : threadQueues) {
 				if (queue) {
 					std::lock_guard<std::mutex> lock(queue->mutex);
