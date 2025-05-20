@@ -80,7 +80,7 @@ namespace BDACL {
 			auto& queue = *threadQueues[index];
 			{
 				std::lock_guard<std::mutex> lock(queue.mutex);
-				queue.tasks.push_front(task);
+				queue.tasks.push_back(task);
 				queue.notified = true;
 				queue.cv.notify_one();
 			}
