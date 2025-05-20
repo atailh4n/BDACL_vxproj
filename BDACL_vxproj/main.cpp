@@ -78,7 +78,7 @@ int main(int argc, char* argv[]) {
 
             std::cout << "BDACS::DAGL (Depend. Aware Grouping Layer / New)" << std::endl;
             std::this_thread::sleep_for(std::chrono::seconds(1)); // Restabilization
-            long long BDACS_Res = BenchFW::runDATaskSchedulerBenchmark(); // Micro disabled due to bugs
+            long long BDACS_Res = BenchFW::runDATaskSchedulerBenchmarkMicro(); // Micro disabled due to bugs
             bdacs_results.push_back(BDACS_Res);
             std::this_thread::sleep_for(std::chrono::seconds(2)); // Restabilization
             std::cout << "SIMT (Simple Instruction, Multi-Threads / GPU-like)" << std::endl;
@@ -169,11 +169,11 @@ int main(int argc, char* argv[]) {
         std::cout << "Enter to exit...." << std::endl;
     }
     catch (const std::exception& e) {
-        std::cerr << "Exception caught: " << e.what() << std::endl;
+        std::cerr << "Exception caught at main: " << e.what() << std::endl;
         return 1;
     }
     catch (...) {
-        std::cerr << "Unknown exception caught" << std::endl;
+        std::cerr << "Unknown exception caught at main" << std::endl;
         return 1;
     }
 

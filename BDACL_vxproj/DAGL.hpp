@@ -15,12 +15,21 @@ namespace BDACL {
 		std::vector<DATask*> dependants;
 		std::function<void()> job;
 		std::atomic<int> jobPendingDependencies;
+
+		DATask() : job(nullptr), jobPendingDependencies(0) {}
+
+		// Kopyalama yasak (explicit olarak sil)
+		DATask(const DATask&) = delete;
+		DATask& operator=(const DATask&) = delete;
+
+		// Taþýma serbest (default move semantics)
+		DATask(DATask&&) = default;
+		DATask& operator=(DATask&&) = default;
 	};
 
 	class ThreadSafeLogger {
 		std::mutex cout_mutex;
 	public:
-		#pragma omp critical
 		void log(const std::string& message) {
 			std::lock_guard<std::mutex> lock(cout_mutex);
 			std::cout << message << std::endl;
@@ -44,16 +53,16 @@ namespace BDACL {
 		// Work-stealing için optimize edilmiþ fonksiyon
 		bool tryStealWork(DATask*& task, size_t thiefIndex) {
 			const size_t numQueues = threadQueues.size();
-			#pragma omp parallel for
 			for (size_t i = 1; i < numQueues; ++i) {
 				const size_t victimIndex = (thiefIndex + i) % numQueues;
 				auto& victimQueue = *threadQueues[victimIndex];
-
-				std::unique_lock<std::mutex> lock(victimQueue.mutex, std::try_to_lock);
-				if (lock && !victimQueue.tasks.empty()) {
-					task = victimQueue.tasks.back();
-					victimQueue.tasks.pop_back();
-					return true;
+				{
+					std::unique_lock<std::mutex> lock(victimQueue.mutex, std::try_to_lock);
+					if (lock && !victimQueue.tasks.empty()) {
+						task = victimQueue.tasks.back();
+						victimQueue.tasks.pop_back();
+						return true;
+					}
 				}
 			}
 			return false;
@@ -66,15 +75,15 @@ namespace BDACL {
 
 		void addTask(DATask* task) {
 			if (!task || stop.load()) return;
+			if (task->jobPendingDependencies.load() > 0) return;
 			size_t index = currentQueueIndex.fetch_add(1, std::memory_order_relaxed) % threadQueues.size();
 			auto& queue = *threadQueues[index];
-			#pragma omp critical
 			{
 				std::lock_guard<std::mutex> lock(queue.mutex);
 				queue.tasks.push_front(task);
 				queue.notified = true;
+				queue.cv.notify_one();
 			}
-			queue.cv.notify_one();
 		}
 
 		void initSchedulerPool(int threadCount = -1) {
@@ -89,7 +98,6 @@ namespace BDACL {
 
 			// Sonra thread'leri baþlat
 			threads.reserve(threadCount);
-			#pragma omp parallel for
 			for (int i = 0; i < threadCount; ++i) {
 				threads.emplace_back([this, i] {
 					auto& localQueue = *threadQueues[i];
@@ -98,7 +106,6 @@ namespace BDACL {
 						DATask* task = nullptr;
 
 						// 1. Önce yerel kuyruktan al
-						#pragma omp critical
 						{
 							std::unique_lock<std::mutex> lock(localQueue.mutex);
 							if (!localQueue.tasks.empty()) {
@@ -157,12 +164,10 @@ namespace BDACL {
 	public:
 		void markTaskFinished(DATask* task) {
 			if (!task) return;
-			#pragma omp parallel for
 			for (auto dep : task->dependants) {
 				if (!dep) continue;
-
-				#pragma omp atomic
-				int remaining = --dep->jobPendingDependencies;
+				int remaining;
+				remaining = --dep->jobPendingDependencies;
 				if (remaining == 0) {
 					addTask(dep);
 				}
