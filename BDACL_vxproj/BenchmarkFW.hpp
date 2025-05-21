@@ -21,10 +21,109 @@ static constexpr int TRIGC = 2'000;
 using namespace KGL;
 
 namespace BenchFW {
+	static void RayIntersectsTriangleSimulation_Scalable_MicroRevised(int triangleCount = TRIGC, int rayCount = RAYC) {
+		// Define the logger and daTaskSch.
+		BDACL::ThreadSafeLogger logger;
+		BDACL::DATask_Scheduler daTaskSch;
+		// Wait for tasks finish. We use future.
+		std::promise<void> promise;
+		std::future<void> future = promise.get_future();
+
+		// Initialize pool.
+		daTaskSch.initSchedulerPool(THREADS);
+		// Do jobs here.
+		BDACL::DATask task1, task2, task3, task4;
+		// Pass address to lambda
+		{
+			task1.job = [&logger] {
+				logger.log("Hello World!"); // Logger is needed because to prevent race cond.
+				};
+		}
+		{
+			task2.job = [&logger, &promise] {
+				logger.log("This one must wait for task1!");
+				promise.set_value(); // Last job is finished.
+			};
+		}
+
+		daTaskSch.addDependant(&task1, &task2); // Task1 = Parent. Task2 = Child.
+		daTaskSch.addTask(&task1); // Just run task1, the start point.
+		// Only add undependent and syncronous tasks. If we had any task
+		// like task1, we should started it like the example.
+
+		// Wait for the finish.
+		future.get();
+
+		// After finish, notify the scheduler.
+		daTaskSch.shutdown();
+		
+		// Triangle produce
+		std::vector<Triangle> triangles;
+		triangles.reserve(triangleCount);
+
+		std::mt19937 rng(std::random_device{}());
+		std::uniform_real_distribution<float> dist(-100.0f, 100.0f);
+
+
+		//gen random trigs
+		#pragma omp parallel for
+		for (size_t i = 0; i < triangleCount; ++i)
+		{
+			Vec3 v0(dist(rng), dist(rng), dist(rng));
+			Vec3 v1 = v0 + Vec3(dist(rng) * 0.1f, dist(rng) * 0.1f, dist(rng) * 0.1f);
+			Vec3 v2 = v0 + Vec3(dist(rng) * 0.1f, dist(rng) * 0.1f, dist(rng) * 0.1f);
+			triangles.emplace_back(v0, v1, v2);
+		}
+
+		//BVH node create
+		auto bvhRoot = BVHNode::build(triangles);
+
+		//rt
+		std::vector<Ray> rays;
+		rays.reserve(rayCount);
+		#pragma omp parallel for
+		for (int i = 0; i < rayCount; ++i) {
+			Vec3 origin(dist(rng), dist(rng), dist(rng));
+			Vec3 dir(dist(rng), dist(rng), dist(rng));
+			rays.emplace_back(origin, dir.normalize());
+		}
+
+		// Çarpışma testi
+		int hitCount = 0;
+		#pragma omp parallel for
+		for (const auto& ray : rays) {
+			HitPoint hit;
+			std::function<bool(const BVHNode*, const Ray&, HitPoint&)> traverse;
+			traverse = [&](const BVHNode* node, const Ray& ray, HitPoint& hit) -> bool {
+				if (!node) return false;
+				float tMin, tMax;
+				if (!node->bounds.intersect(ray, tMin, tMax)) return false;
+
+				bool hitSomething = false;
+				if (node->isLeaf) {
+					for (const auto& tri : node->triangles) {
+						if (tri.intersect(ray, hit)) {
+							hitSomething = true;
+						}
+					}
+				}
+				else {
+					hitSomething |= traverse(node->left.get(), ray, hit);
+					hitSomething |= traverse(node->right.get(), ray, hit);
+				}
+				return hitSomething;
+				};
+
+			if (traverse(bvhRoot.get(), ray, hit)) {
+				++hitCount;
+			}
+		}
+
+	}
 	static void RayIntersectsTriangleSimulation_Scalable(int triangleCount = TRIGC, int rayCount = RAYC) {
 		std::vector<Triangle> triangles;
 		std::mutex coutMutex;
-		BDACL::ThreadSafeLogger logger;
+		//BDACL::ThreadSafeLogger logger;
 		triangles.reserve(triangleCount);
 
 		std::mt19937 rng(std::random_device{}());
@@ -83,8 +182,8 @@ namespace BenchFW {
 			}
 		}
 
-		std::string text = "[RT] Rays: " + std::to_string(rayCount) + ", hits: " + std::to_string(hitCount);
-		logger.log(text);
+		//std::string text = "[RT] Rays: " + std::to_string(rayCount) + ", hits: " + std::to_string(hitCount);
+		//logger.log(text);
 	}
 
 	static void AStarPathfinderTest_Scalable(int nodeCount = 1000, int connectionsPerNode = 3) {
@@ -134,191 +233,211 @@ namespace BenchFW {
 	}
 
 #pragma region SIMTvsBDACL
-	static long long runBDACLDefaultSchedulerBenchmark() {
-		BDACL::Constructor scheduler(THREADS);
-		const int TASK_COUNT = THREADS * 32;
+	//static long long runBDACLDefaultSchedulerBenchmark() {
+	//	BDACL::Constructor scheduler(THREADS);
+	//	const int TASK_COUNT = THREADS * 32;
 
-		std::vector<std::future<void>> futures;
+	//	std::vector<std::future<void>> futures;
 
-		for (int i = 0; i < TASK_COUNT; ++i) {
-			auto promise = std::make_shared<std::promise<void>>();
-			futures.push_back(promise->get_future());
-			scheduler.enqueue([promise] {
-				RayIntersectsTriangleSimulation_Scalable();
-				promise->set_value();
-				});
-		}
+	//	for (int i = 0; i < TASK_COUNT; ++i) {
+	//		auto promise = std::make_shared<std::promise<void>>();
+	//		futures.push_back(promise->get_future());
+	//		scheduler.enqueue([promise] {
+	//			RayIntersectsTriangleSimulation_Scalable();
+	//			promise->set_value();
+	//			});
+	//	}
 
-		auto start_bdacl = std::chrono::high_resolution_clock::now();
-		for (auto& fut : futures) {
-			fut.get();
-		}
+	//	auto start_bdacl = std::chrono::high_resolution_clock::now();
+	//	for (auto& fut : futures) {
+	//		fut.get();
+	//	}
 
-		auto end_bdacl = std::chrono::high_resolution_clock::now();
-		return std::chrono::duration_cast<std::chrono::microseconds>(end_bdacl - start_bdacl).count();
-	}
+	//	auto end_bdacl = std::chrono::high_resolution_clock::now();
+	//	return std::chrono::duration_cast<std::chrono::microseconds>(end_bdacl - start_bdacl).count();
+	//}
 
-	static long long runDATaskSchedulerBenchmark() {
-		BDACL::DATask_Scheduler scheduler;
-		const int TASK_COUNT = THREADS * 32;
+	//static long long runDATaskSchedulerBenchmark() {
+	//	BDACL::DATask_Scheduler scheduler;
+	//	const int TASK_COUNT = THREADS * 32;
 
-		std::vector<BDACL::DATask> tasks(TASK_COUNT);
-		std::vector<std::future<void>> futures;
+	//	std::vector<BDACL::DATask> tasks(TASK_COUNT);
+	//	std::vector<std::future<void>> futures;
 
-		for (int i = 0; i < TASK_COUNT; ++i) {
-			auto promise = std::make_shared<std::promise<void>>();
-			futures.push_back(promise->get_future());
-			tasks[i].job = [promise] {
-				RayIntersectsTriangleSimulation_Scalable();
-				promise->set_value();
-				};
-			tasks[i].jobPendingDependencies = 0;
-		}
+	//	for (int i = 0; i < TASK_COUNT; ++i) {
+	//		auto promise = std::make_shared<std::promise<void>>();
+	//		futures.push_back(promise->get_future());
+	//		tasks[i].job = [promise] {
+	//			RayIntersectsTriangleSimulation_Scalable();
+	//			promise->set_value();
+	//			};
+	//		tasks[i].jobPendingDependencies = 0;
+	//	}
 
-		auto start_bdacl = std::chrono::high_resolution_clock::now();
-		scheduler.initSchedulerPool(THREADS);
+	//	auto start_bdacl = std::chrono::high_resolution_clock::now();
+	//	scheduler.initSchedulerPool(THREADS);
 
-		// Tüm task'ları sırayla ekle
-		for (auto& task : tasks) {
-			scheduler.addTask(&task);
-		}
+	//	// Tüm task'ları sırayla ekle
+	//	for (auto& task : tasks) {
+	//		scheduler.addTask(&task);
+	//	}
 
-		for (auto& fut : futures) {
-			fut.get();
-		}
+	//	for (auto& fut : futures) {
+	//		fut.get();
+	//	}
 
-		auto end_bdacl = std::chrono::high_resolution_clock::now();
-		return std::chrono::duration_cast<std::chrono::microseconds>(end_bdacl - start_bdacl).count();
-	}
+	//	auto end_bdacl = std::chrono::high_resolution_clock::now();
+	//	return std::chrono::duration_cast<std::chrono::microseconds>(end_bdacl - start_bdacl).count();
+	//}
 	
-	static long long runDATaskSchedulerBenchmarkMicro() {
-		BDACL::DATask_Scheduler scheduler;
+	// FIXME: 2GB RAM ALLOC?????!
+   // static long long runDATaskSchedulerBenchmarkMicro() {
+   //     BDACL::DATask_Scheduler scheduler;
 
-		constexpr int TASK_COUNT = THREADS * 32;
-		std::vector<BDACL::DATask> tasks(TASK_COUNT);
+   //     constexpr int TASK_COUNT = THREADS * 32;
+   //     std::vector<BDACL::DATask> tasks(TASK_COUNT * 4);
 
-		auto promise = std::make_shared<std::promise<void>>();
-		std::future<void> future = promise->get_future();
+   //     auto promise = std::make_shared<std::promise<void>>();
+   //     std::future<void> future = promise->get_future();
 
-		BDACL::ThreadSafeLogger logger;
+   //     BDACL::ThreadSafeLogger logger;
 
-		// Shared data - wrap in struct to avoid capture issues
-		struct SharedData {
-			std::vector<Triangle> triangles;
-			std::unique_ptr<BVHNode> bvhRoot;
-			std::vector<Ray> rays;
-			std::atomic<int> hitCount{ 0 };
-		};
+   //     // Shared data - wrap in struct to avoid capture issues
+   //     struct SharedData {
+   //         std::vector<std::vector<Triangle>> triangles;
+   //         std::vector<std::unique_ptr<BVHNode>> bvhRoots;
+   //         std::vector<std::vector<Ray>> rays;
+   //         std::vector<int> hitCounts; // Changed from atomic to regular int
+   //         std::atomic<int> completedTasks{ 0 }; // Track completed tasks
+   //     };
 
-		std::shared_ptr<SharedData> sharedData = std::make_shared<SharedData>();
+   //     std::shared_ptr<SharedData> sharedData = std::make_shared<SharedData>();
+   //     sharedData->triangles.resize(TASK_COUNT);
+   //     sharedData->bvhRoots.resize(TASK_COUNT);
+   //     sharedData->rays.resize(TASK_COUNT);
+   //     sharedData->hitCounts.resize(TASK_COUNT, 0); // Initialize all hit counts to 0
 
-		scheduler.initSchedulerPool(THREADS);
-		// Task 0: Generate random triangles
-		{
-			tasks[0].job = [sharedData]() {
-				std::vector<Triangle> localTriangles;
-				localTriangles.reserve(TRIGC);  // Reserve space first
-				{
-					std::mt19937 rng(std::random_device{}() + omp_get_thread_num());
-					std::uniform_real_distribution<float> dist(-100.0f, 100.0f);
-					std::vector<Triangle> threadLocalTriangles;
-					#pragma omp parallel for
-					for (int i = 0; i < TRIGC; ++i) {
-						Vec3 v0(dist(rng), dist(rng), dist(rng));
-						Vec3 v1 = v0 + Vec3(dist(rng) * 0.1f, dist(rng) * 0.1f, dist(rng) * 0.1f);
-						Vec3 v2 = v0 + Vec3(dist(rng) * 0.1f, dist(rng) * 0.1f, dist(rng) * 0.1f);
-						threadLocalTriangles.emplace_back(v0, v1, v2);
-					}
+   //     // Mutex for protecting hitCounts access
+   //     std::shared_ptr<std::mutex> hitCountMutex = std::make_shared<std::mutex>();
 
-					{
-						localTriangles.insert(localTriangles.end(),
-							threadLocalTriangles.begin(),
-							threadLocalTriangles.end());
+   //     scheduler.initSchedulerPool(THREADS);
 
-						sharedData->triangles = std::move(localTriangles);
-					}
-				}
-			};
-			tasks[0].jobPendingDependencies = 0;
-		}
+   //     // Create TASK_COUNT sets of tasks
+   //     for (int i = 0; i < TASK_COUNT; i++) {
+   //         // Task 0: Generate random triangles
+   //         {
+   //             tasks[i * 4 + 0].job = [sharedData, i, &logger]() {
+   //                 {
+			//			std::vector<Triangle> triangles(TRIGC);
+			//			#pragma omp parallel
+			//			{
+			//				std::mt19937 rng(std::random_device{}() + omp_get_thread_num());
+			//				std::uniform_real_distribution<float> dist(-100.0f, 100.0f);
 
-		// Task 1: Build BVH (dependent on Task 0)
-		{
-			tasks[1].job = [&sharedData]() {
-				sharedData->bvhRoot = BVHNode::build(sharedData->triangles);
-				};
-			tasks[1].jobPendingDependencies = 1;
-		}
+			//				#pragma omp for
+			//				for (int j = 0; j < TRIGC; ++j) {
+			//					Vec3 v0(dist(rng), dist(rng), dist(rng));
+			//					Vec3 v1 = v0 + Vec3(dist(rng) * 0.1f, dist(rng) * 0.1f, dist(rng) * 0.1f);
+			//					Vec3 v2 = v0 + Vec3(dist(rng) * 0.1f, dist(rng) * 0.1f, dist(rng) * 0.1f);
+			//					triangles[j] = Triangle(v0, v1, v2);
+			//				}
+			//			}
 
-		// Task 2: Generate rays (independent)
-		{
-			tasks[2].job = [sharedData]() {
-				std::vector<Ray> localRays;
-				localRays.reserve(RAYC);
+			//			sharedData->triangles[i] = std::move(triangles);
+   //                 }
+   //                 };
+   //             tasks[i * 4 + 0].jobPendingDependencies = 0;
+   //         }
 
-				{
-					std::mt19937 rng(std::random_device{}() + omp_get_thread_num());
-					std::uniform_real_distribution<float> dist(-100.0f, 100.0f);
-					std::vector<Ray> threadLocalRays;
-					#pragma omp parallel for
-					for (int i = 0; i < RAYC; ++i) {
-						Vec3 origin(dist(rng), dist(rng), dist(rng));
-						Vec3 dir(dist(rng), dist(rng), dist(rng));
-						threadLocalRays.emplace_back(origin, dir.normalize());
-					}
+   //         // Task 1: Build BVH (dependent on Task 0)
+   //         {
+   //             tasks[i * 4 + 1].job = [sharedData, i, &logger]() {
+   //                 sharedData->bvhRoots[i] = BVHNode::build(sharedData->triangles[i]);
+   //                 };
+   //             tasks[i * 4 + 1].jobPendingDependencies = 1;
+   //         }
 
-					localRays.insert(localRays.end(),
-						threadLocalRays.begin(),
-						threadLocalRays.end());
-				}
+   //         // Task 2: Generate rays (independent)
+   //         {
+   //             tasks[i * 4 + 2].job = [sharedData, i, &logger]() {
+   //                 std::vector<Ray> localRays;
+   //                 localRays.reserve(RAYC);
 
-				sharedData->rays = std::move(localRays);
-				};
-			tasks[2].jobPendingDependencies = 0;
-		}
+   //                 {
+   //                     std::mt19937 rng(std::random_device{}() + omp_get_thread_num());
+   //                     std::uniform_real_distribution<float> dist(-100.0f, 100.0f);
+   //                     std::vector<Ray> threadLocalRays;
+			//			#pragma omp parallel for
+   //                     for (int j = 0; j < RAYC; ++j) {
+   //                         Vec3 origin(dist(rng), dist(rng), dist(rng));
+   //                         Vec3 dir(dist(rng), dist(rng), dist(rng));
+   //                         threadLocalRays.emplace_back(origin, dir.normalize());
+   //                     }
 
-		// Task 3: Collision test (dependent on Task 1 and 2)
-		{
-			tasks[3].job = [sharedData, &logger, promise]() {
-				int localHitCount = 0;
-				if (sharedData->bvhRoot && !sharedData->rays.empty()) {
-					for (size_t i = 0; i < sharedData->rays.size(); ++i) {
-						HitPoint hit;
-						if (sharedData->bvhRoot->intersect(sharedData->rays[i], hit)) {
-							localHitCount++;
-						}
-					}
-				}
+   //                     localRays.insert(localRays.end(),
+   //                         threadLocalRays.begin(),
+   //                         threadLocalRays.end());
+   //                 }
 
-				sharedData->hitCount = localHitCount;
-				logger.log("[RT] Rays: " + std::to_string(sharedData->rays.size()) +
-					", hits: " + std::to_string(sharedData->hitCount.load()));
-				promise->set_value();
-			};
-			tasks[3].jobPendingDependencies = 2;
-		}
+   //                 sharedData->rays[i] = std::move(localRays);
+   //                 };
+   //             tasks[i * 4 + 2].jobPendingDependencies = 0;
+   //         }
 
-		// Bağımlılıkları doğru şekilde ekle:
-		tasks[0].dependants.push_back(&tasks[1]);
-		tasks[1].dependants.push_back(&tasks[3]);
-		tasks[2].dependants.push_back(&tasks[3]);
+   //         // Task 3: Collision test (dependent on Task 1 and 2)
+   //         {
+   //             tasks[i * 4 + 3].job = [sharedData, &logger, promise, i, hitCountMutex]() {
+   //                 int localHitCount = 0;
+   //                 if (sharedData->bvhRoots[i] && !sharedData->rays[i].empty()) {
+			//			#pragma omp parallel for
+   //                     for (size_t j = 0; j < sharedData->rays[i].size(); ++j) {
+   //                         HitPoint hit;
+   //                         if (sharedData->bvhRoots[i]->intersect(sharedData->rays[i][j], hit)) {
+   //                             localHitCount++;
+   //                         }
+   //                     }
+   //                 }
 
-		// Scheduler'a ekle
-		scheduler.addTask(&tasks[0]);
-		scheduler.addTask(&tasks[1]);
-		scheduler.addTask(&tasks[2]);
-		scheduler.addTask(&tasks[3]);
+   //                 // Safely update hit count using mutex
+   //                 {
+   //                     std::lock_guard<std::mutex> lock(*hitCountMutex);
+   //                     sharedData->hitCounts[i] = localHitCount;
+   //                 }
 
-		// Run tasks
-		auto start = std::chrono::high_resolution_clock::now();
+   //                 // Increase completed task count
+   //                 int completedTasks = ++sharedData->completedTasks;
 
-		// Wait for all tasks
-		future.wait();
+   //                 // Only set the promise value when ALL tasks are completed
+   //                 if (completedTasks == TASK_COUNT) {
+   //                     promise->set_value();
+   //                 }
+   //             };
+   //             tasks[i * 4 + 3].jobPendingDependencies = 2;
+   //         }
 
-		scheduler.shutdown();
-		auto end = std::chrono::high_resolution_clock::now();
-		return std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-	}
+   //         // Set dependencies for this iteration
+			//scheduler.addDependant(&tasks[i * 4 + 0], &tasks[i * 4 + 1]);
+			//scheduler.addDependant(&tasks[i * 4 + 1], &tasks[i * 4 + 3]);
+			//scheduler.addDependant(&tasks[i * 4 + 2], &tasks[i * 4 + 3]);
+
+   //         // Add tasks to scheduler
+   //         scheduler.addTask(&tasks[i * 4 + 0]);
+   //         scheduler.addTask(&tasks[i * 4 + 1]);
+   //         scheduler.addTask(&tasks[i * 4 + 2]);
+   //         scheduler.addTask(&tasks[i * 4 + 3]);
+   //     }
+
+   //     // Run tasks
+   //     auto start = std::chrono::high_resolution_clock::now();
+
+   //     // Wait for all tasks
+   //     future.wait();
+
+   //     scheduler.shutdown();
+   //     auto end = std::chrono::high_resolution_clock::now();
+
+   //     return std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+   // }
 
 	static long long runSIMTBenchmark() {
 		std::vector<std::function<void(int)>> program = {

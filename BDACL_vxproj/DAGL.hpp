@@ -9,12 +9,12 @@
 #include <condition_variable>
 #include <memory>
 #include <stdexcept>
+#include <omp.h>
 
 namespace BDACL {
 	struct DATask {
-		std::vector<DATask*> dependants;
+	public:
 		std::function<void()> job;
-		std::atomic<int> jobPendingDependencies;
 
 		DATask() : job(nullptr), jobPendingDependencies(0) {}
 
@@ -25,6 +25,12 @@ namespace BDACL {
 		// Taþýma serbest (default move semantics)
 		DATask(DATask&&) = default;
 		DATask& operator=(DATask&&) = default;
+
+	private:
+		friend class DATask_Scheduler;
+
+		std::atomic<int> jobPendingDependencies;
+		std::vector<DATask*> dependants;
 	};
 
 	class ThreadSafeLogger {
@@ -59,8 +65,8 @@ namespace BDACL {
 				{
 					std::unique_lock<std::mutex> lock(victimQueue.mutex, std::try_to_lock);
 					if (lock && !victimQueue.tasks.empty()) {
-						task = victimQueue.tasks.back();
-						victimQueue.tasks.pop_back();
+						task = victimQueue.tasks.front();
+						victimQueue.tasks.pop_front();
 						return true;
 					}
 				}
@@ -80,10 +86,19 @@ namespace BDACL {
 			auto& queue = *threadQueues[index];
 			{
 				std::lock_guard<std::mutex> lock(queue.mutex);
-				queue.tasks.push_front(task);
+				queue.tasks.push_back(task);
 				queue.notified = true;
 				queue.cv.notify_one();
 			}
+		}
+
+		void addDependant(DATask* task, DATask* child) {
+			if (!task || stop.load()) return;
+			#pragma omp atomic
+			{
+				child->jobPendingDependencies++;
+			}
+			task->dependants.push_back(child);
 		}
 
 		void initSchedulerPool(int threadCount = -1) {
@@ -164,11 +179,10 @@ namespace BDACL {
 	public:
 		void markTaskFinished(DATask* task) {
 			if (!task) return;
+			#pragma omp parallel for
 			for (auto dep : task->dependants) {
 				if (!dep) continue;
-				int remaining;
-				remaining = --dep->jobPendingDependencies;
-				if (remaining == 0) {
+				if (--dep->jobPendingDependencies == 0) {
 					addTask(dep);
 				}
 			}

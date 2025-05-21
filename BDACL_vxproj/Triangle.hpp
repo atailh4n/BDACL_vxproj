@@ -11,7 +11,7 @@ namespace KGL
 		Vec3 v0, v1, v2;
 		Vec3 normal;
 		int materialId;
-
+		Triangle() = default;
 		Triangle(const Vec3& v0, const Vec3& v1, const Vec3& v2, int matId = 0)
 			: v0(v0), v1(v1), v2(v2), materialId(matId) {
 			normal = (v1 - v0).cross(v2 - v0).normalize();
