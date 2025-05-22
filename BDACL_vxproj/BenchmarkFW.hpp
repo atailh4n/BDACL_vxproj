@@ -21,32 +21,105 @@ static constexpr int TRIGC = 2'000;
 using namespace KGL;
 
 namespace BenchFW {
-	static void RayIntersectsTriangleSimulation_Scalable_MicroRevised(int triangleCount = TRIGC, int rayCount = RAYC) {
+	static long long RayIntersectsTriangleSimulation_Scalable_MicroRevised(int triangleCount = TRIGC, int rayCount = RAYC) {
 		// Define the logger and daTaskSch.
-		BDACL::ThreadSafeLogger logger;
 		BDACL::DATask_Scheduler daTaskSch;
 		// Wait for tasks finish. We use future.
 		std::promise<void> promise;
 		std::future<void> future = promise.get_future();
 
+		//Raytracing job
+		// Triangle produce
+		std::unique_ptr<std::vector<Triangle>> triangles;
+		triangles = std::make_unique<std::vector<Triangle>>();
+		triangles->reserve(triangleCount);
+
+		// Ray produce
+		std::unique_ptr<std::vector<Ray>> rays;
+		rays = std::make_unique<std::vector<Ray>>();
+		rays->reserve(rayCount);
+
+		int hitCount = 0;
+
+		std::mt19937 rng(std::random_device{}());
+		std::uniform_real_distribution<float> dist(-100.0f, 100.0f);
+
+		std::shared_ptr<BVHNode> bvhRoot;
+
 		// Initialize pool.
 		daTaskSch.initSchedulerPool(THREADS);
+
 		// Do jobs here.
 		BDACL::DATask task1, task2, task3, task4;
+
 		// Pass address to lambda
 		{
-			task1.job = [&logger] {
-				logger.log("Hello World!"); // Logger is needed because to prevent race cond.
-				};
+			// Create triangles!
+			task1.job = [&triangles, &rng, &dist, &triangleCount] {
+				#pragma omp parallel for
+				for (int i = 0; i < triangleCount; ++i) {
+					Vec3 v0(dist(rng), dist(rng), dist(rng));
+					Vec3 v1 = v0 + Vec3(dist(rng) * 0.1f, dist(rng) * 0.1f, dist(rng) * 0.1f);
+					Vec3 v2 = v0 + Vec3(dist(rng) * 0.1f, dist(rng) * 0.1f, dist(rng) * 0.1f);
+					#pragma omp critical
+					triangles->emplace_back(v0, v1, v2);
+				}
+			};
 		}
 		{
-			task2.job = [&logger, &promise] {
-				logger.log("This one must wait for task1!");
-				promise.set_value(); // Last job is finished.
+			task2.job = [&bvhRoot, &triangles] {
+				bvhRoot = BVHNode::build(*triangles);
+			};
+		}
+		{
+			task3.job = [&rays, &rng, &dist, &rayCount] {
+				#pragma omp parallel for
+				for (int i = 0; i < rayCount; ++i) {
+					Vec3 origin(dist(rng), dist(rng), dist(rng));
+					Vec3 dir(dist(rng), dist(rng), dist(rng));
+					#pragma omp critical
+					rays->emplace_back(origin, dir.normalize());
+				}
+			};
+		}
+		{
+			task4.job = [&promise, &rays, &bvhRoot, &hitCount] {
+				#pragma omp parallel for
+				for (const auto& ray : *rays) {
+					HitPoint hit;
+					std::function<bool(const BVHNode*, const Ray&, HitPoint&)> traverse;
+					traverse = [&](const BVHNode* node, const Ray& ray, HitPoint& hit) -> bool {
+						if (!node) return false;
+						float tMin, tMax;
+						if (!node->bounds.intersect(ray, tMin, tMax)) return false;
+
+						bool hitSomething = false;
+						if (node->isLeaf) {
+							for (const auto& tri : node->triangles) {
+								if (tri.intersect(ray, hit)) {
+									hitSomething = true;
+								}
+							}
+						}
+						else {
+							hitSomething |= traverse(node->left.get(), ray, hit);
+							hitSomething |= traverse(node->right.get(), ray, hit);
+						}
+						return hitSomething;
+						};
+
+					if (traverse(bvhRoot.get(), ray, hit)) {
+						++hitCount;
+					}
+				};
+				promise.set_value(); // Finish
 			};
 		}
 
 		daTaskSch.addDependant(&task1, &task2); // Task1 = Parent. Task2 = Child.
+		daTaskSch.addDependant(&task2, &task3);
+		daTaskSch.addDependant(&task3, &task4);
+		auto startft = std::chrono::high_resolution_clock::now();
 		daTaskSch.addTask(&task1); // Just run task1, the start point.
 		// Only add undependent and syncronous tasks. If we had any task
 		// like task1, we should started it like the example.
@@ -56,73 +129,12 @@ namespace BenchFW {
 
 		// After finish, notify the scheduler.
 		daTaskSch.shutdown();
-		
-		// Triangle produce
-		std::vector<Triangle> triangles;
-		triangles.reserve(triangleCount);
-
-		std::mt19937 rng(std::random_device{}());
-		std::uniform_real_distribution<float> dist(-100.0f, 100.0f);
-
-
-		//gen random trigs
-		#pragma omp parallel for
-		for (size_t i = 0; i < triangleCount; ++i)
-		{
-			Vec3 v0(dist(rng), dist(rng), dist(rng));
-			Vec3 v1 = v0 + Vec3(dist(rng) * 0.1f, dist(rng) * 0.1f, dist(rng) * 0.1f);
-			Vec3 v2 = v0 + Vec3(dist(rng) * 0.1f, dist(rng) * 0.1f, dist(rng) * 0.1f);
-			triangles.emplace_back(v0, v1, v2);
-		}
-
-		//BVH node create
-		auto bvhRoot = BVHNode::build(triangles);
-
-		//rt
-		std::vector<Ray> rays;
-		rays.reserve(rayCount);
-		#pragma omp parallel for
-		for (int i = 0; i < rayCount; ++i) {
-			Vec3 origin(dist(rng), dist(rng), dist(rng));
-			Vec3 dir(dist(rng), dist(rng), dist(rng));
-			rays.emplace_back(origin, dir.normalize());
-		}
-
-		// Çarpışma testi
-		int hitCount = 0;
-		#pragma omp parallel for
-		for (const auto& ray : rays) {
-			HitPoint hit;
-			std::function<bool(const BVHNode*, const Ray&, HitPoint&)> traverse;
-			traverse = [&](const BVHNode* node, const Ray& ray, HitPoint& hit) -> bool {
-				if (!node) return false;
-				float tMin, tMax;
-				if (!node->bounds.intersect(ray, tMin, tMax)) return false;
-
-				bool hitSomething = false;
-				if (node->isLeaf) {
-					for (const auto& tri : node->triangles) {
-						if (tri.intersect(ray, hit)) {
-							hitSomething = true;
-						}
-					}
-				}
-				else {
-					hitSomething |= traverse(node->left.get(), ray, hit);
-					hitSomething |= traverse(node->right.get(), ray, hit);
-				}
-				return hitSomething;
-				};
-
-			if (traverse(bvhRoot.get(), ray, hit)) {
-				++hitCount;
-			}
-		}
-
+		auto endft = std::chrono::high_resolution_clock::now();
+		long long duration = std::chrono::duration_cast<std::chrono::microseconds>(endft - startft).count();
+		return static_cast<long long>(duration * (32.0));
 	}
 	static void RayIntersectsTriangleSimulation_Scalable(int triangleCount = TRIGC, int rayCount = RAYC) {
 		std::vector<Triangle> triangles;
-		std::mutex coutMutex;
 		//BDACL::ThreadSafeLogger logger;
 		triangles.reserve(triangleCount);
 
@@ -135,6 +147,7 @@ namespace BenchFW {
 			Vec3 v0(dist(rng), dist(rng), dist(rng));
 			Vec3 v1 = v0 + Vec3(dist(rng) * 0.1f, dist(rng) * 0.1f, dist(rng) * 0.1f);
 			Vec3 v2 = v0 + Vec3(dist(rng) * 0.1f, dist(rng) * 0.1f, dist(rng) * 0.1f);
+			#pragma omp critical
 			triangles.emplace_back(v0, v1, v2);
 		}
 
@@ -148,6 +161,7 @@ namespace BenchFW {
 		for (int i = 0; i < rayCount; ++i) {
 			Vec3 origin(dist(rng), dist(rng), dist(rng));
 			Vec3 dir(dist(rng), dist(rng), dist(rng));
+			#pragma omp critical
 			rays.emplace_back(origin, dir.normalize());
 		}
 

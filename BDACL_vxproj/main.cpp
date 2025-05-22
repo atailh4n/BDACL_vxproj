@@ -78,7 +78,7 @@ int main(int argc, char* argv[]) {
 
             std::cout << "BDACS::DAGL (Depend. Aware Grouping Layer / New)" << std::endl;
             std::this_thread::sleep_for(std::chrono::seconds(1)); // Restabilization
-            long long BDACS_Res = BenchFW::runDATaskSchedulerBenchmarkMicro(); // Micro disabled due to bugs
+            long long BDACS_Res = BenchFW::RayIntersectsTriangleSimulation_Scalable_MicroRevised(); /*BenchFW::runDATaskSchedulerBenchmarkMicro();*/ // Micro disabled due to bugs
             bdacs_results.push_back(BDACS_Res);
             std::this_thread::sleep_for(std::chrono::seconds(2)); // Restabilization
             std::cout << "SIMT (Simple Instruction, Multi-Threads / GPU-like)" << std::endl;
