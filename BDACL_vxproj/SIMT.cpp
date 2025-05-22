@@ -10,7 +10,6 @@ void SIMT::Constructor::execute(int threadCount)
 	std::vector<std::thread> threads;
 	threads.reserve(threadCount);
 
-#pragma omp parallel for num_threads(threadCount) collapse(2)
 	for (int t = 0; t < threadCount; ++t) {
 		threads.emplace_back([this, t, threadCount]() {
 			for (int w = t; w < warpCount && w < (int)warps.size(); w += threadCount) {
@@ -22,7 +21,7 @@ void SIMT::Constructor::execute(int threadCount)
 					}
 				}
 			}
-			});
+		});
 	}
 
 	#pragma omp parallel for

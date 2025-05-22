@@ -35,12 +35,12 @@ std::string getTimestamp() {
 }
 
 // Helper function to calculate standard deviation
-double calculateStdDev(const std::vector<long long>& values, double mean) {
-    double sq_sum = std::inner_product(values.begin(), values.end(), values.begin(), 0.0,
+static double calculateStdDev(const std::vector<long long>& values, double mean) {
+    double sq_sum = static_cast<double>(std::inner_product(values.begin(), values.end(), values.begin(), 0.0,
         [](double sum, double val) { return sum + val; },
-        [mean](double a, double b) { return (a - mean) * (a - mean); });
+        [mean](double a, double b) { return (a - mean) * (a - mean); }));
 
-    return std::sqrt(sq_sum / values.size());
+    return std::sqrt(sq_sum / static_cast<double>(values.size()));
 }
 
 static void printArchitectureInfo() {
@@ -87,8 +87,8 @@ int main(int argc, char* argv[]) {
             simt_results.push_back(SIMT_Res);
 
             // Calculate difference for this iteration
-            double diff = SIMT_Res - BDACS_Res;
-            double diff_pct = (diff / SIMT_Res) * 100.0;
+            double diff = static_cast<double>(SIMT_Res - BDACS_Res);
+            double diff_pct = static_cast<double>((diff / SIMT_Res) * 100.0);
 
             // Print formatted results for this iteration
             std::cout << "\n--------------------------------" << std::endl;
@@ -138,7 +138,7 @@ int main(int argc, char* argv[]) {
 
             // Write individual test results
             for (int i = 0; i < REPEAT_COUNT; ++i) {
-                double diff = simt_results[i] - bdacs_results[i];
+                double diff = static_cast<double>(simt_results[i] - bdacs_results[i]);
                 double diff_pct = (diff / simt_results[i]) * 100.0;
 
                 csv_file << THREADS << ","
