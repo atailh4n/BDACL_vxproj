@@ -16,10 +16,9 @@ Make sure you have:
 3. A thread-safe logger (`ThreadSafeLogger`) available.
 4. Task dependencies defined via `addDependant`.
 
-## ✅ Example Code
+## ✅ Sample Code
 ```cpp
 #include <future>
-#include <promise>
 #include "BDACL.hpp"
 #include "DAGL.hpp"
 ...
